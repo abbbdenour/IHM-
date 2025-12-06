@@ -971,4 +971,330 @@ function setupEventListeners() {
             dropTrash();
         }
     });
+
 }
+
+let audioContext;
+let correctSound;
+let wrongSound;
+let dropSound;
+let collectSound;
+let soundsEnabled = true;
+
+function initSounds() {
+    try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        correctSound = createTone(523.25, 0.3); // C5
+        wrongSound = createTone(349.23, 0.3); // F4
+        dropSound = createTone(392.00, 0.2); // G4
+        collectSound = createTone(440.00, 0.15); // A4
+    } catch (e) {
+        console.log("الأصوات غير مدعومة في هذا المتصفح");
+        soundsEnabled = false;
+    }
+}
+
+function createTone(frequency, duration) {
+    return function() {
+        if (!soundsEnabled || !audioContext) return;
+        
+        try {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = frequency;
+            oscillator.type = 'sine';
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + duration);
+        } catch (e) {
+            console.log("خطأ في تشغيل الصوت");
+        }
+    };
+}
+
+function playSound(type) {
+    if (!soundsEnabled) return;
+    
+    if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume();
+    }
+    
+    switch(type) {
+        case 'correct':
+            if (correctSound) correctSound();
+            break;
+        case 'wrong':
+            if (wrongSound) wrongSound();
+            break;
+        case 'drop':
+            if (dropSound) dropSound();
+            break;
+        case 'collect':
+            if (collectSound) collectSound();
+            break;
+    }
+}
+
+function dropTrash() {
+    if (!player.carrying) return;
+    
+    const trash = player.carrying;
+    let nearestBin = null;
+    let minDistance = Infinity;
+    
+    for (let bin of bins) {
+        const distance = Math.sqrt(
+            Math.pow(bin.x + bin.width / 2 - player.x, 2) + 
+            Math.pow(bin.y + bin.height / 2 - player.y, 2)
+        );
+        
+        if (distance < minDistance) {
+            minDistance = distance;
+            nearestBin = bin;
+        }
+    }
+    
+    if (nearestBin && minDistance < 120) {
+        const correct = trash.type === nearestBin.type;
+        
+        if (correct) {
+            playSound('correct');
+        } else {
+            playSound('wrong');
+        }
+        
+        if (correct) {
+            score += 15;
+            timeLeft += 10;
+            showPointsMessage('+15 نقطة! +10 ثوانٍ!', '#4ECDC4');
+            
+            createConfetti();
+        } else {
+            score = Math.max(0, score - 8);
+            
+            showPointsMessage('-8 نقاط!', '#FF6B6B');
+        }
+        
+        if (score > bestScore) {
+            bestScore = score;
+            localStorage.setItem('bestScore', bestScore);
+        }
+        
+        const index = trashItems.indexOf(trash);
+        if (index > -1) {
+            trashItems.splice(index, 1);
+        }
+        
+        player.carrying = null;
+        
+        if (score >= 100) {
+            stageIndex++;
+            
+            if (stageIndex >= stages.length) {
+                showWinScreen();
+            } else {
+                score = 0;
+                timeLeft = 120;
+                spawnBins();
+                spawnTrash();
+                updateStageBackground();
+                
+                showPointsMessage(`مرحلة جديدة: ${stages[stageIndex].name}`, '#FFD700');
+            }
+        }
+        
+        if (trashItems.length === 0) {
+            spawnTrash();
+        }
+    } else {
+        playSound('drop');
+    }
+}
+
+function collectTrash() {
+    if (player.carrying) return;
+    
+    for (let trash of trashItems) {
+        if (trash.collected) continue;
+        
+        const distance = Math.sqrt(
+            Math.pow(trash.x - player.x, 2) + 
+            Math.pow(trash.y - player.y, 2)
+        );
+        
+        if (distance < 70) {
+            trash.collected = true;
+            player.carrying = trash;
+            
+            playSound('collect');
+            break;
+        }
+    }
+}
+
+function initGame() {
+    canvas = document.getElementById('game-canvas');
+    ctx = canvas.getContext('2d');
+    
+    createBinSprites();
+    
+    initSounds();
+    
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    
+    setupControls();
+    
+    preventMobileScroll();
+    optimizePerformance();
+    showMobileTips();
+    
+    startGame();
+}
+
+function addSoundControls() {
+    const soundButton = document.createElement('button');
+    soundButton.id = 'sound-button';
+    soundButton.innerHTML = '🔊';
+    soundButton.style.cssText = `
+        position: fixed;
+        top: 110px;
+        right: 10px;
+        z-index: 1000;
+        background: rgba(0,0,0,0.7);
+        color: white;
+        border: none;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        font-size: 20px;
+        cursor: pointer;
+    `;
+    
+    soundButton.onclick = function() {
+        soundsEnabled = !soundsEnabled;
+        soundButton.innerHTML = soundsEnabled ? '🔊' : '🔇';
+        
+        // حفظ الإعداد
+        localStorage.setItem('soundsEnabled', soundsEnabled);
+    };
+    
+    // تحميل الإعداد المحفوظ
+    const savedSoundSetting = localStorage.getItem('soundsEnabled');
+    if (savedSoundSetting !== null) {
+        soundsEnabled = savedSoundSetting === 'true';
+    }
+    
+    soundButton.innerHTML = soundsEnabled ? '🔊' : '🔇';
+    document.body.appendChild(soundButton);
+}
+
+
+function createSimpleSound(frequency, duration) {
+    return function() {
+        if (!soundsEnabled || !audioContext) return;
+        
+        try {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = frequency;
+            oscillator.type = 'triangle';
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + duration);
+        } catch (e) {
+            console.log("خطأ في تشغيل الصوت");
+        }
+    };
+}
+
+function initSounds() {
+    try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        correctSound = createSimpleSound(523.25, 0.5); 
+        wrongSound = createSimpleSound(220.00, 0.4); 
+        dropSound = createSimpleSound(392.00, 0.2);     
+        collectSound = createSimpleSound(587.33, 0.15); 
+    } catch (e) {
+        console.log("الأصوات غير مدعومة في هذا المتصفح");
+        soundsEnabled = false;
+    }
+}
+
+function setupEventListeners() {
+    startButton.addEventListener('click', () => {
+        homeScreen.style.display = 'none';
+        gameScreen.style.display = 'flex';
+        initGame();
+    });
+    
+    learnButton.addEventListener('click', () => {
+        homeScreen.style.display = 'none';
+        learnScreen.style.display = 'flex';
+    });
+    
+    closeLearnButton.addEventListener('click', () => {
+        learnScreen.style.display = 'none';
+        homeScreen.style.display = 'flex';
+    });
+    
+    playAgainButton.addEventListener('click', () => {
+        winScreen.style.display = 'none';
+        resetGame();
+        gameActive = true;
+        gameLoop();
+    });
+    
+    dropButton.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (player.carrying) {
+            dropTrash();
+        }
+    });
+}
+
+window.addEventListener('load', function() {
+    addMobileCSS();
+    addSoundControls();
+    
+    if (isMobileDevice()) {
+        const fullscreenBtn = document.createElement('button');
+        fullscreenBtn.textContent = '🔄 ملء الشاشة';
+        fullscreenBtn.style.cssText = `
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            z-index: 100;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 12px;
+        `;
+        fullscreenBtn.onclick = function() {
+            if (document.documentElement.requestFullscreen) {
+                document.documentElement.requestFullscreen();
+            } else if (document.documentElement.webkitRequestFullscreen) {
+                document.documentElement.webkitRequestFullscreen();
+            }
+        };
+        document.body.appendChild(fullscreenBtn);
+    }
+});
